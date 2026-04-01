@@ -1,0 +1,15 @@
+# virtual env
+.ima205/
+# dataset
+train/
+test/
+data_cropped/
+# model weights
+*.pth
+*.pt
+# jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
