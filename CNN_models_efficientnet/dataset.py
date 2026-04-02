@@ -3,6 +3,7 @@ import torch
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, WeightedRandomSampler, Dataset
 import numpy as np
+from torchvision.transforms import RandAugment
 
 # def get_loaders(data_dir, batch_size=64):
 #     # CNN 实时增强策略
@@ -89,12 +90,13 @@ def get_loaders(data_dir, batch_size=64, img_size=256):
     # --- B. 剧烈增强 (少数类使用) ---
     strong_transform = transforms.Compose([
         transforms.Resize((img_size, img_size)),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
-        transforms.RandomRotation(180), # 180度大幅度旋转
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.8, 1.2)), # 随机缩放平移
-        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)), # 模糊处理，对抗过拟合
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1), # 更强的变色
+        # transforms.RandomHorizontalFlip(),
+        # transforms.RandomVerticalFlip(),
+        # transforms.RandomRotation(180), # 180度大幅度旋转
+        # transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.8, 1.2)), # 随机缩放平移
+        # transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)), # 模糊处理，对抗过拟合
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1), # 更强的变色
+        RandAugment(num_ops=2, magnitude=9),  # 自动搜索最优增强组合，先不要加，后续可以尝试
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])

@@ -28,10 +28,18 @@ def apply_wbc_crop_robust(img_rgb, fixed_size=300): # efficientnet 版本用 300
     if best_idx == -1: return img_rgb
     cx, cy = int(centroids[best_idx][0]), int(centroids[best_idx][1])
     half_s = fixed_size // 2
-    x1, x2, y1, y2 = cx-half_s, cx+half_s, cy-half_s, cy+half_s
-    # 越界处理逻辑 (简略版，建议用你之前的完整版)
-    x1, y1 = max(0, x1), max(0, y1)
-    return img_rgb[y1:y2, x1:x2]
+    cx = np.clip(cx, half_s, w - half_s)
+    cy = np.clip(cy, half_s, h - half_s)
+    x1, x2 = cx - half_s, cx + half_s
+    y1, y2 = cy - half_s, cy + half_s
+    
+    cropped = img_rgb[y1:y2, x1:x2]
+    
+    # 安全保障：如果输出不是300x300，resize补齐
+    if cropped.shape[0] != fixed_size or cropped.shape[1] != fixed_size:
+        cropped = cv2.resize(cropped, (fixed_size, fixed_size), interpolation=cv2.INTER_LINEAR)
+    
+    return cropped
 
 def prepare_dataset(csv_path, src_dir, dst_dir, is_test=False):
     df = pd.read_csv(csv_path)
@@ -50,7 +58,8 @@ def prepare_dataset(csv_path, src_dir, dst_dir, is_test=False):
             # 测试集直接存：dst/ID.jpg
             save_path = os.path.join(dst_dir, row['ID'])
             
-        Image.fromarray(cropped).save(save_path, quality=95)
+        # Image.fromarray(cropped).save(save_path, quality=95) # jpg有损压缩。
+        Image.fromarray(cropped).save(save_path.replace('.jpg', '.png')) 
 
 if __name__ == "__main__":
     prepare_dataset("train_metadata.csv", "./train", "./data_cropped/train_eff")

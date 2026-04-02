@@ -9,6 +9,7 @@ from torchvision import transforms
 from model import get_model
 from tqdm import tqdm
 import torchvision.transforms.functional as F
+import timm
 
 # # 1. 配置
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -89,10 +90,10 @@ import torchvision.transforms.functional as F
 
 # 配置
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "best_wbc_model_efficientnet_b3.pth"
+MODEL_PATH = "best_wbc_model_efficientnet_b3_focalloss_RandAug_Mixup.pth"
 TEST_METADATA = "test_metadata.csv"
 TEST_IMG_DIR = "./data_cropped/test_eff"
-IMG_SIZE = 300 # 保持与训练一致
+IMG_SIZE = 300 # 保持与训练一致 or 224
 
 CLASS_NAMES = ['BA', 'BL', 'BNE', 'EO', 'LY', 'MMY', 'MO', 'MY', 'PC', 'PLY', 'PMY', 'SNE', 'VLY']
 
@@ -143,7 +144,7 @@ def predict():
 
     # 保存
     test_df['label'] = predictions
-    test_df[['ID', 'label']].to_csv("submission_efficientnet_b3_tta.csv", index=False)
+    test_df[['ID', 'label']].to_csv("submission_efficientnet_b3_focalloss_RandAug_Mixup_tta.csv", index=False)
     print("Inference Complete. TTA submission saved.")
 
 if __name__ == "__main__":
