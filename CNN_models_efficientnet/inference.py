@@ -46,20 +46,31 @@ def tta_predict_single(model, image, transform):
 
 
 def load_models():
-    models_cfg = [
-        # EfficientNet-B3
-        (
+    models_cfg = []
+    for fold in range(5):
+        models_cfg.append((
             get_model(num_classes=13, model_name='efficientnet_b3'),
-            "best_wbc_model_efficientnet_b3_focalloss.pth",
+            f"best_efficientnet_fold{fold}.pth",
             300
-        ),
-        # ConvNeXt-Large
-        (
+        ))
+    for fold in range(5):
+        models_cfg.append((
             timm.create_model('convnext_large', pretrained=False, num_classes=13),
-            "best_wbc_model_convnext_large.pth",
+            f"best_convnext_fold{fold}.pth",
             224
-        ),
-    ]
+        ))
+        # # EfficientNet-B3
+        # (
+        #     get_model(num_classes=13, model_name='efficientnet_b3'),
+        #     "best_wbc_model_efficientnet_b3_focalloss.pth",
+        #     300
+        # ),
+        # # ConvNeXt-Large
+        # (
+        #     timm.create_model('convnext_large', pretrained=False, num_classes=13),
+        #     "best_wbc_model_convnext_large.pth",
+        #     224
+        # ),
     
     loaded = []
     for model, ckpt_path, img_size in models_cfg:

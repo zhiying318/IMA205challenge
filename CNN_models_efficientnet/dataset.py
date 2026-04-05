@@ -4,6 +4,7 @@ from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, WeightedRandomSampler, Dataset
 import numpy as np
 from torchvision.transforms import RandAugment
+from sklearn.model_selection import StratifiedKFold
 
 # def get_loaders(data_dir, batch_size=64):
 #     # CNN 实时增强策略
@@ -136,5 +137,65 @@ def get_loaders(data_dir, batch_size=64, img_size=256):
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=sampler, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    
+    return train_loader, val_loader, full_dataset.classes
+
+
+def get_loaders_fold(data_dir, fold_idx, n_folds=5, batch_size=64, img_size=256):
+    full_dataset = datasets.ImageFolder(data_dir, transform=None)
+    targets = np.array(full_dataset.targets)
+    
+    # StratifiedKFold 保证少数类在每折中比例一致
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    splits = list(skf.split(np.zeros(len(targets)), targets))
+    train_indices, val_indices = splits[fold_idx]
+    
+    # 以下和你现有逻辑完全一致
+    base_transform = transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(20),
+        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])   # 不变
+    strong_transform = transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        # transforms.RandomHorizontalFlip(),
+        # transforms.RandomVerticalFlip(),
+        # transforms.RandomRotation(180), # 180度大幅度旋转
+        # transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.8, 1.2)), # 随机缩放平移
+        # transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)), # 模糊处理，对抗过拟合
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1), # 更强的变色
+        RandAugment(num_ops=2, magnitude=9),  # 自动搜索最优增强组合，先不要加，后续可以尝试
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]) # 不变
+    val_transform = transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])    # 不变
+    
+    train_subset = torch.utils.data.Subset(full_dataset, train_indices)
+    train_dataset = MinorityAugDataset(train_subset, base_transform, strong_transform)
+    val_subset = torch.utils.data.Subset(full_dataset, val_indices)
+    val_dataset = MinorityAugDataset(val_subset, val_transform, val_transform)
+
+    fold_targets = targets[train_indices]
+    class_sample_count = np.array([
+        len(np.where(fold_targets == t)[0]) for t in np.unique(fold_targets)
+    ])
+    weight = 1. / class_sample_count
+    samples_weight = torch.from_numpy(
+        np.array([weight[t] for t in fold_targets])
+    ).double()
+    sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, 
+                              sampler=sampler, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, 
+                            shuffle=False, num_workers=4)
     
     return train_loader, val_loader, full_dataset.classes

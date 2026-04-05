@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.amp import autocast, GradScaler
 from model import get_model
-from dataset import get_loaders
+from dataset import get_loaders, get_loaders_fold
 from sklearn.metrics import f1_score, classification_report
 import tqdm
 import matplotlib.pyplot as plt
@@ -20,7 +20,7 @@ import datetime
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def log_message(message, log_file="training_efficientnet.log"):
+def log_message(message, log_file="training_convnext_2_kfold.log"):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     formatted_msg = f"[{timestamp}] {message}"
     print(formatted_msg) # 打印到 tmux 屏幕
@@ -76,13 +76,16 @@ weights = 1.0 / torch.sqrt(counts) # 使用平方根，平滑权重梯度
 weights = weights / weights.sum() * len(counts) # 归一化，防止 Loss 太小
 weights = weights.to(device)
 
+N_FOLDS = 2
 def train(use_convnext=False):
     if use_convnext:
+        arch = "convnext"
         img_size = 224          # ConvNeXt标准输入尺寸
         batch_size = 64         # ConvNeXt-Large显存占用大，batch调小
-        model_save_path = "best_wbc_model_convnext_large_focalloss_RandAug_Mixup.pth"
-        cm_save_dir = "./CNN_models_convnext/confusion_matrix_focalloss_RandAug_Mixup"
+        model_save_path = "best_wbc_model_convnext_large_focalloss_RandAug.pth"
+        cm_save_dir = "./CNN_models_convnext/confusion_matrix_focalloss_RandAug"
     else:
+        arch = "efficientnet"
         img_size = 300          # EfficientNet-B3
         batch_size = 64
         model_save_path = "best_wbc_model_efficientnet_b3_focalloss_RandAug.pth"
@@ -91,114 +94,122 @@ def train(use_convnext=False):
     os.makedirs(cm_save_dir, exist_ok=True)
 
 
+    for fold in range(N_FOLDS):
+        log_message(f"\n{'='*50}")
+        log_message(f"  {arch.upper()} — Fold {fold+1}/{N_FOLDS}")
+        log_message(f"{'='*50}")
 
-    # train_loader, val_loader, class_names = get_loaders("./data_cropped/train")
-    train_loader, val_loader, class_names = get_loaders(
-        data_dir="./data_cropped/train_eff", 
-        batch_size=batch_size,      
-        img_size=img_size        # 必须和你 dataset.py 里的 Resize 一致 efficientnet 版本用 300x300 的输入，所以 Resize 也要改成 300x300，resnet 版本则是 256x256
-    )
+        model_save_path = f"best_{arch}_fold{fold}.pth"
+        cm_save_dir = f"./CNN_models_{arch}/confusion_matrix_{arch}/fold{fold}"
+        os.makedirs(cm_save_dir, exist_ok=True)
 
-    if use_convnext:
-        model = timm.create_model(
-            'convnext_large',
-            pretrained=True,
-            num_classes=len(class_names)
-        ).to(device)
-        # model.set_grad_checkpointing(True) # 很慢，梯度检查点。开了之后一个epoch大概需要20多分钟
-    else:
-        model = get_model(num_classes=len(class_names), model_name='efficientnet_b3').to(device)
+        train_loader, val_loader, class_names = get_loaders_fold(
+            data_dir="./data_cropped/train_eff", 
+            fold_idx=fold,
+            n_folds=N_FOLDS,
+            batch_size=batch_size,      
+            img_size=img_size        
+        )
 
-    
-    # criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1) # 传入权重
-    # ✅ FocalLoss：先不加alpha，如果少数类还是差再加weights
-    criterion = FocalLoss(alpha=None, gamma=2.0, label_smoothing=0.1)
-    lr = 5e-5 if use_convnext else 1e-4
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5, factor=0.5) # 学习率调度器：监控验证集 Macro-F1，如果不增长就降低学习率
+        if use_convnext:
+            model = timm.create_model(
+                'convnext_large',
+                pretrained=True,
+                num_classes=len(class_names)
+            ).to(device)
+            # model.set_grad_checkpointing(True) # 很慢，梯度检查点。开了之后一个epoch大概需要20多分钟
+        else:
+            model = get_model(num_classes=len(class_names), model_name='efficientnet_b3').to(device)
 
-    best_f1 = 0.0
-    scaler = GradScaler('cuda')
-    for epoch in range(60): # mixup makes to 80 round instead of 60
-        model.train()
-        running_loss = 0.0
-        for inputs, labels in tqdm.tqdm(train_loader, desc=f"Epoch {epoch}"):
-            inputs, labels = inputs.to(device), labels.to(device)
+        criterion = FocalLoss(alpha=None, gamma=2.0, label_smoothing=0.1)
+        lr = 5e-5 if use_convnext else 1e-4
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5, factor=0.5) # 学习率调度器：监控验证集 Macro-F1，如果不增长就降低学习率
 
-            # # --- [新增：应用 Mixup] --- alpha 建议设在 0.2-0.4 之间。如果设为 0，则不启用 mixup
-            # inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, alpha=0.2)
-
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels) # loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam) # loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            # 混合精度训练
-            # with autocast('cuda'):                        # fp16前向，显存减半，主要是为了convnext需要
-            #     outputs = model(inputs)
-            #     loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam) # loss = criterion(outputs, labels)
-            # scaler.scale(loss).backward()
-            # scaler.step(optimizer)
-            # scaler.update()
-
-            running_loss += loss.item()
-
-        # 验证
-        model.eval()
-        val_loss = 0.0
-        all_preds, all_labels = [], []
-        with torch.no_grad():
-            for inputs, labels in tqdm.tqdm(val_loader, desc=f"Epoch {epoch} [Val]"):
+        best_f1 = 0.0
+        scaler = GradScaler('cuda')
+        for epoch in range(60): # mixup makes to 80 round instead of 60
+            model.train()
+            running_loss = 0.0
+            for inputs, labels in tqdm.tqdm(train_loader, desc=f"Epoch {epoch}"):
                 inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
-                preds = torch.argmax(outputs, 1)
-                all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
-        
-        # 计算整体 Macro-F1
-        avg_val_loss = val_loss / len(val_loader)
-        macro_f1 = f1_score(all_labels, all_preds, average='macro')
-        
-        print(f"\nEpoch {epoch} Summary:")
-        print(f"Train Loss: {running_loss/len(train_loader):.4f} | Val Loss: {avg_val_loss:.4f} | Macro-F1: {macro_f1:.4f}")
-        current_lr = optimizer.param_groups[0]['lr']
-        print(f"Current Learning Rate: {current_lr:.8f}")
-        log_message("-" * 30)
-        log_message(f"Epoch {epoch} | Train Loss: {running_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Macro-F1: {macro_f1:.4f} | LR: {optimizer.param_groups[0]['lr']:.8f}")
-        
-        # 🟢 打印每个类别的详细报告 (包括每个类的 F1-score)
-        print("\n详细分类报告 (Per-class F1):")
-        # classification_report 会输出每个类的 precision, recall, f1-score
-        report = classification_report(all_labels, all_preds, target_names=class_names, digits=4)
-        print(report)
-        
-        cm = confusion_matrix(all_labels, all_preds)
-        plt.figure(figsize=(12, 10))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                    xticklabels=class_names, yticklabels=class_names)
-        plt.xlabel('Predicted')
-        plt.ylabel('Actual')
-        plt.title(f'Epoch {epoch} Confusion Matrix')
-        # 保存图片，不要在服务器上 plt.show()
-        plt.savefig(f'{cm_save_dir}/confusion_matrix_epoch_{epoch}.png')
-        plt.close()
 
-        # 调度器步进
-        scheduler.step(macro_f1)
-        
-        # 保存最佳模型
-        if macro_f1 > best_f1:
-            best_f1 = macro_f1
-            torch.save(model.state_dict(), model_save_path)
-            print(f"✅ 保存最佳模型，Macro-F1: {best_f1:.4f}")
-            log_message(f"✅ 发现更佳模型! 保存路径: {model_save_path}, Macro-F1: {best_f1:.4f}")
+                # # --- [新增：应用 Mixup] --- alpha 建议设在 0.2-0.4 之间。如果设为 0，则不启用 mixup
+                # inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, alpha=0.2)
+
+                optimizer.zero_grad()
+
+                # outputs = model(inputs)
+                # loss = criterion(outputs, labels) # loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam) # loss = criterion(outputs, labels)
+                # loss.backward()
+                # optimizer.step()
+
+                # 混合精度训练
+                with autocast('cuda'):                        # fp16前向，显存减半，主要是为了convnext需要
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels) # loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam) # loss = criterion(outputs, labels)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+
+                running_loss += loss.item()
+
+            # 验证
+            model.eval()
+            val_loss = 0.0
+            all_preds, all_labels = [], []
+            with torch.no_grad():
+                for inputs, labels in tqdm.tqdm(val_loader, desc=f"Epoch {epoch} [Val]"):
+                    inputs, labels = inputs.to(device), labels.to(device)
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+                    val_loss += loss.item()
+                    preds = torch.argmax(outputs, 1)
+                    all_preds.extend(preds.cpu().numpy())
+                    all_labels.extend(labels.cpu().numpy())
+            
+            # 计算整体 Macro-F1
+            avg_val_loss = val_loss / len(val_loader)
+            macro_f1 = f1_score(all_labels, all_preds, average='macro')
+            
+            print(f"\nEpoch {epoch} Summary:")
+            print(f"Train Loss: {running_loss/len(train_loader):.4f} | Val Loss: {avg_val_loss:.4f} | Macro-F1: {macro_f1:.4f}")
+            current_lr = optimizer.param_groups[0]['lr']
+            print(f"Current Learning Rate: {current_lr:.8f}")
+            log_message("-" * 30)
+            log_message(f"Epoch {epoch} | Train Loss: {running_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Macro-F1: {macro_f1:.4f} | LR: {optimizer.param_groups[0]['lr']:.8f}")
+            
+            # 🟢 打印每个类别的详细报告 (包括每个类的 F1-score)
+            print("\n详细分类报告 (Per-class F1):")
+            # classification_report 会输出每个类的 precision, recall, f1-score
+            report = classification_report(all_labels, all_preds, target_names=class_names, digits=4)
+            print(report)
+            
+            cm = confusion_matrix(all_labels, all_preds)
+            plt.figure(figsize=(12, 10))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                        xticklabels=class_names, yticklabels=class_names)
+            plt.xlabel('Predicted')
+            plt.ylabel('Actual')
+            plt.title(f'Epoch {epoch} Confusion Matrix')
+            # 保存图片，不要在服务器上 plt.show()
+            plt.savefig(f'{cm_save_dir}/confusion_matrix_epoch_{epoch}.png')
+            plt.close()
+
+            # 调度器步进
+            scheduler.step(macro_f1)
+            
+            # 保存最佳模型
+            if macro_f1 > best_f1:
+                best_f1 = macro_f1
+                torch.save(model.state_dict(), model_save_path)
+                print(f"✅ 保存最佳模型，Macro-F1: {best_f1:.4f}")
+                log_message(f"✅ 发现更佳模型! 保存路径: {model_save_path}, Macro-F1: {best_f1:.4f}")
 
 
 if __name__ == "__main__":
     # 训练EfficientNet-B3：
-    train(use_convnext=False)
+    # train(use_convnext=False)
     
     # 训练ConvNeXt-Large：
-    # train(use_convnext=True)
+    train(use_convnext=True)
