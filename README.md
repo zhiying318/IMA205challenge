@@ -1,8 +1,8 @@
 # IMA205 Challenge — White Blood Cell Classification
 
-13-class WBC classification from microscopy images. The dataset is heavily imbalanced: SNE makes up ~45% of training data while PLY has only 11 samples. Two pipelines are developed in parallel: a hand-crafted feature + XGBoost baseline, and a CNN ensemble (ResNet-50, EfficientNet-B3, ConvNeXt-Large) trained with Focal Loss and k-fold CV.
+Author: Zhiying ZOU
 
-**Best result**: 10-model ensemble (5× EfficientNet-B3 + 5× ConvNeXt-Large) with 8-view TTA and F1-weighted averaging.
+13-class WBC classification Kaggle challenge for course IMA205, year 2025-26. This dataset is heavily imbalanced: SNE makes up ~45% of training data while PLY has only 11 samples. I tried two pipelines in parallel: a hand-crafted feature + XGBoost baseline, and a CNN ensemble (ResNet-50, EfficientNet-B3, ConvNeXt-Large) trained with Focal Loss and k-fold CV.
 
 ---
 
@@ -244,4 +244,3 @@ pandas
 numpy
 ```
 
-GPU with ≥16 GB VRAM recommended for ConvNeXt-Large. EfficientNet-B3 fits on 8 GB with AMP enabled.
