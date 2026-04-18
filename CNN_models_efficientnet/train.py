@@ -76,7 +76,7 @@ weights = 1.0 / torch.sqrt(counts) # 使用平方根，平滑权重梯度
 weights = weights / weights.sum() * len(counts) # 归一化，防止 Loss 太小
 weights = weights.to(device)
 
-N_FOLDS = 2
+N_FOLDS = 5
 def train(use_convnext=False):
     if use_convnext:
         arch = "convnext"
