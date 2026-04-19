@@ -108,6 +108,8 @@ def post_process(avg_prob, class_names=CLASS_NAMES):
     sne_idx = 11  # SNE
     vly_idx = 12  # VLY
     ly_idx = 4    # LY
+    mmy_idx = 5   # MMY
+    my_idx = 7    # MY（MMY最容易被误判为MY）
     
     pred_idx = prob.argmax().item()
     
@@ -128,6 +130,15 @@ def post_process(avg_prob, class_names=CLASS_NAMES):
         ly_prob = prob[ly_idx].item()
         if vly_prob < 0.40 and ly_prob > 0.20:
             prob[ly_idx] *= 1.3
+            pred_idx = prob.argmax().item()
+
+    # 规则3: MMY vs MY 校准
+    # MMY 只有 122 个，MY 有 1177 个
+    if pred_idx == mmy_idx:
+        mmy_prob = prob[mmy_idx].item()
+        my_prob = prob[my_idx].item()
+        if mmy_prob < 0.40 and my_prob > 0.25:
+            prob[my_idx] *= 1.2
             pred_idx = prob.argmax().item()
     
     return pred_idx
@@ -166,11 +177,11 @@ def predict_ensemble():
 
     # 保存两个版本对比
     test_df['label'] = predictions
-    out_name = "submission_ensemble/submission_weighted_ensemble_pp_05.csv"
+    out_name = "submission_ensemble/submission_weighted_ensemble_pp_05_1904.csv"
     test_df[['ID', 'label']].to_csv(out_name, index=False)
     
     test_df['label'] = predictions_no_pp
-    out_name2 = "submission_ensemble/submission_weighted_ensemble_no_pp_05.csv"
+    out_name2 = "submission_ensemble/submission_weighted_ensemble_no_pp_05_1904.csv"
     test_df[['ID', 'label']].to_csv(out_name2, index=False)
     
     # 统计后处理改变了多少预测
